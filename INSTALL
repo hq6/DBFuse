@@ -1,0 +1,11 @@
+DEPENDENCIES (instructions for debian-based systems)
+
+    sudo apt-get install python-pip
+    sudo apt-get install libfuse2
+    sudo adduser <username> fuse
+    pip install --user fusepy
+    pip install --user dropbox
+
+RUNNING
+
+    python DBFuse.py <Mount point>
