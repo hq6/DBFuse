@@ -85,7 +85,7 @@ class DBFuse(Operations):
    def cleanMeta(self,path):
       try: del self.metadata[path]
       except: pass
-      try: self.metadata[os.dirname(path)]
+      try: del self.metadata[os.path.dirname(path)]
       except: pass
 
    def moveHelper(self, old, new, func):
