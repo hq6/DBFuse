@@ -8,9 +8,10 @@ import sys
 import errno
 import locale
 import pwd
-from time import time,mktime
+from time import time,mktime,sleep
 from datetime import datetime
 from StringIO import StringIO
+from threading import Thread
 import stat
 import tempfile
 
@@ -24,7 +25,7 @@ import tempfile
 from fuse import FUSE, FuseOSError, Operations
 from dropbox import client, rest, session
 
-def debug(trace=True):
+def debug(trace=False):
     """a decorator for handling authentication and exceptions"""
     def decorate(f):
         def wrapper(self, *args, **kwargs):
@@ -60,10 +61,53 @@ class DBFuse(Operations):
       print "Mounting %s's Dropbox account." % account_info['display_name']
       print "Account Email Address: %s" % account_info['email']
 
+      # Pre-fill the metadata cache
+      self.curDelta = None
+      self.refreshDelta()
+
+
+      # Start a new thread to keep the metadata cache up to date
+      self.runMetaThread = True
+      self.metaThread = Thread(target=self.refreshMeta)
+      self.metaThread.daemon = True
+      self.metaThread.start()
+
+   # Populate the metadata from a list of entries, generally obtained from delta
+   def loadMeta(self, entriesList):
+      CACHE_TIME = 120
+      now = time() 
+      timeout = now + CACHE_TIME
+      for path,meta in entriesList:
+         self.metadata[path] = (timeout, meta)
+
+   def refreshDelta(self):
+      if self.curDelta:
+          self.curDelta = self.api_client.delta(self.curDelta['cursor'])
+      else:
+          self.curDelta = self.api_client.delta()
+      self.loadMeta(self.curDelta['entries'])
+      while self.curDelta['has_more']:
+          self.curDelta = self.api_client.delta(self.curDelta['cursor'])
+          self.loadMeta(self.curDelta['entries'])
+
+   def refreshMeta(self):
+      while self.runMetaThread: 
+         response = self.api_client.longpoll_delta(self.curDelta['cursor'], 30)
+         if response['changes']:
+            self.refreshDelta()
+
+         if 'backoff' in response: 
+             sleep(float(response['backoff']))
+
+         # Extend timers on all files in metadata
+         # TODO: how do we handle new files added needing to invalidate metadata?
+         # We assume that once invalidated, there will never be a conflict
+         self.loadMeta((x,y[1]) for x,y in self.metadata.iteritems())
+          
     # Helper methods
     # ==================
    def getMetadata(self, path):
-        CACHE_TIME = 60
+        CACHE_TIME = 120
         now = time() 
         timeout = now + CACHE_TIME
         if path not in self.metadata or self.metadata[path][0]  < now:
